@@ -85,9 +85,7 @@ def resample_timeframe(df, timeframe):
         "close": "last",
     })
 
-    result = result.dropna()
-
-    return result
+    return result.dropna()
 
 
 # ============================================================
@@ -165,19 +163,21 @@ def add_atr(df, period=14):
 
 
 # ============================================================
-# 1H MARKET STRUCTURE
+# CAUSAL 1H MARKET STRUCTURE
 # ============================================================
 
 def add_market_structure(df):
     df = df.copy()
 
-    df["swing_high"] = False
-    df["swing_low"] = False
-
     left = 2
     right = 2
 
+    swing_high = pd.Series(False, index=df.index)
+    swing_low = pd.Series(False, index=df.index)
+
+    # A swing at candle i is only confirmed at i + 2.
     for i in range(left, len(df) - right):
+
         high = df["high"].iloc[i]
         low = df["low"].iloc[i]
 
@@ -187,13 +187,22 @@ def add_market_structure(df):
         left_lows = df["low"].iloc[i-left:i]
         right_lows = df["low"].iloc[i+1:i+right+1]
 
-        if high > left_highs.max() and high > right_highs.max():
-            df.iloc[i, df.columns.get_loc("swing_high")] = True
+        if (
+            high > left_highs.max()
+            and high > right_highs.max()
+        ):
+            confirmation_index = i + right
+            swing_high.iloc[confirmation_index] = True
 
-        if low < left_lows.min() and low < right_lows.min():
-            df.iloc[i, df.columns.get_loc("swing_low")] = True
+        if (
+            low < left_lows.min()
+            and low < right_lows.min()
+        ):
+            confirmation_index = i + right
+            swing_low.iloc[confirmation_index] = True
 
-    structure = None
+    df["swing_high"] = swing_high
+    df["swing_low"] = swing_low
 
     last_swing_high = None
     previous_swing_high = None
@@ -201,17 +210,18 @@ def add_market_structure(df):
     last_swing_low = None
     previous_swing_low = None
 
+    structure = None
     structures = []
 
     for i in range(len(df)):
 
         if df["swing_high"].iloc[i]:
             previous_swing_high = last_swing_high
-            last_swing_high = df["high"].iloc[i]
+            last_swing_high = df["high"].iloc[i - right]
 
         if df["swing_low"].iloc[i]:
             previous_swing_low = last_swing_low
-            last_swing_low = df["low"].iloc[i]
+            last_swing_low = df["low"].iloc[i - right]
 
         if (
             last_swing_high is not None
@@ -219,6 +229,7 @@ def add_market_structure(df):
             and last_swing_low is not None
             and previous_swing_low is not None
         ):
+
             if (
                 last_swing_high > previous_swing_high
                 and last_swing_low > previous_swing_low
@@ -243,17 +254,22 @@ def add_market_structure(df):
 # ============================================================
 
 def prepare_market_data():
-    # Download 15M data
+
+    # --------------------------------------------------------
+    # 15M DATA
+    # --------------------------------------------------------
+
     df_15m = download_market_data()
 
-    # Remove newest incomplete candle
     df_15m = remove_incomplete_candle(df_15m)
 
-    # Create higher timeframes
+    # --------------------------------------------------------
+    # HIGHER TIMEFRAMES
+    # --------------------------------------------------------
+
     df_1h = resample_timeframe(df_15m, "1h")
     df_4h = resample_timeframe(df_15m, "4h")
 
-    # Remove incomplete higher-timeframe candles
     df_1h = remove_incomplete_candle(df_1h)
     df_4h = remove_incomplete_candle(df_4h)
 
@@ -268,7 +284,7 @@ def prepare_market_data():
     df_15m = add_atr(df_15m, 14)
 
     # --------------------------------------------------------
-    # 1H INDICATORS + STRUCTURE
+    # 1H INDICATORS
     # --------------------------------------------------------
 
     df_1h = add_ema(df_1h, 200)
@@ -281,7 +297,7 @@ def prepare_market_data():
     df_4h = add_ema(df_4h, 200)
 
     # --------------------------------------------------------
-    # PREVENT LOOK-AHEAD
+    # HIGHER-TIMEFRAME AVAILABILITY
     # --------------------------------------------------------
 
     df_1h = df_1h.copy()
@@ -291,7 +307,7 @@ def prepare_market_data():
     df_4h.index = df_4h.index + pd.Timedelta(hours=4)
 
     # --------------------------------------------------------
-    # MERGE HIGHER TIMEFRAMES INTO 15M DATA
+    # MERGE 1H DATA
     # --------------------------------------------------------
 
     df_15m = pd.merge_asof(
@@ -314,6 +330,10 @@ def prepare_market_data():
         direction="backward",
     )
 
+    # --------------------------------------------------------
+    # MERGE 4H DATA
+    # --------------------------------------------------------
+
     df_15m = pd.merge_asof(
         df_15m.sort_index(),
         df_4h[
@@ -333,7 +353,7 @@ def prepare_market_data():
     )
 
     # --------------------------------------------------------
-    # REMOVE ROWS WITHOUT COMPLETE INDICATOR DATA
+    # REMOVE INCOMPLETE DATA
     # --------------------------------------------------------
 
     required_columns = [
@@ -356,10 +376,11 @@ def prepare_market_data():
 
 
 # ============================================================
-# MAIN
+# DIRECT EXECUTION
 # ============================================================
 
 if __name__ == "__main__":
+
     data = prepare_market_data()
 
     print("=" * 60)
@@ -383,9 +404,13 @@ if __name__ == "__main__":
         f"{data['1h_structure'].iloc[-1]}"
     )
 
-    print(
-        f"Latest 4H trend: "
-        f"{'BULLISH' if data['4h_close'].iloc[-1] > data['4h_ema_200'].iloc[-1] else 'BEARISH'}"
+    trend = (
+        "BULLISH"
+        if data["4h_close"].iloc[-1]
+        > data["4h_ema_200"].iloc[-1]
+        else "BEARISH"
     )
+
+    print(f"Latest 4H trend: {trend}")
 
     print("=" * 60)
