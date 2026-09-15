@@ -1,4 +1,5 @@
 import time
+from telegram_bot import send_signal
 from datetime import datetime, timezone
 
 from market_data import prepare_market_data
@@ -42,6 +43,9 @@ def run():
                     print(f"TP3:   {signal['tp3']:.2f}")
 
                     last_signal_time = signal_time
+                    send_signal(signal)
+
+                    print("Telegram signal sent successfully.")
 
                 else:
                     print(
